@@ -1,0 +1,584 @@
+// =============================================================================
+// Prisma schema — ERP Reseller Tech B2B Argentina
+// =============================================================================
+// Convenciones:
+//   - Schemas PostgreSQL: core, inventory, sales, purchases, fiscal, accounting, treasury
+//   - IDs: cuid() para app (cortos, sortables) — no UUID v4
+//   - tenantId en todas las tablas (single-tenant hoy, multi-tenant mañana)
+//   - version Int en aggregate roots (optimistic locking)
+//   - Snake_case en DB via @map — camelCase en Prisma Client
+//   - Montos: Decimal(18, 2) — Prisma los expone como `Decimal` runtime-safe
+//   - Cantidades: Decimal(18, 4)
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["core", "inventory", "sales", "purchases"]
+}
+
+// =============================================================================
+// SCHEMA: core
+// =============================================================================
+
+model Tenant {
+  id           String   @id @default(cuid())
+  legalName    String   @map("legal_name")
+  cuit         String   @unique
+  ivaCondition String   @map("iva_condition")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  users      User[]
+  entities   Entity[]
+  categories ProductCategory[]
+  products   Product[]
+  locations  Location[]
+  stockMoves StockMove[]
+  serials    SerialNumber[]
+  salesOrders  SalesOrder[]
+  purchaseOrders PurchaseOrder[]
+
+  @@map("tenants")
+  @@schema("core")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String    @map("tenant_id")
+  email        String
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name")
+  role         UserRole  @default(USER)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  tenant             Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdStockMoves  StockMove[]  @relation("StockMoveCreatedBy")
+  createdSalesOrders SalesOrder[] @relation("SalesOrderCreatedBy")
+  createdPurchaseOrders PurchaseOrder[] @relation("POCreatedBy")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+  @@schema("core")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  USER
+  VIEWER
+
+  @@schema("core")
+}
+
+// -----------------------------------------------------------------------------
+// Entity: cliente, proveedor, o ambos (frecuente en reseller tech B2B)
+// -----------------------------------------------------------------------------
+
+model Entity {
+  id               String    @id @default(cuid())
+  tenantId         String    @map("tenant_id")
+  entityType       String[]  @map("entity_type") // ['CUSTOMER','SUPPLIER','CARRIER']
+  legalName        String    @map("legal_name")
+  tradeName        String?   @map("trade_name")
+  taxId            String    @map("tax_id") // CUIT canonicalizado (11 dígitos)
+  ivaCondition     String    @map("iva_condition")
+  email            String?
+  phone            String?
+  address          String?
+  city             String?
+  province         String?
+  zipCode          String?   @map("zip_code")
+  // Snapshot del padrón ARCA para evitar N llamadas
+  padronData       Json?     @map("padron_data")
+  padronSyncedAt   DateTime? @map("padron_synced_at")
+  // Términos comerciales
+  creditLimit      Decimal   @default(0) @map("credit_limit") @db.Decimal(18, 2)
+  paymentTermDays  Int       @default(0) @map("payment_term_days")
+  notes            String?
+  isActive         Boolean   @default(true) @map("is_active")
+  // Optimistic locking
+  version          Int       @default(1)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  salesOrders SalesOrder[]
+  supplierOrders PurchaseOrder[] @relation("SupplierOrders")
+
+  @@unique([tenantId, taxId])
+  @@index([tenantId, isActive])
+  @@index([tenantId, legalName])
+  @@map("entities")
+  @@schema("core")
+}
+
+// =============================================================================
+// SCHEMA: inventory
+// =============================================================================
+
+model ProductCategory {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  name                String
+  parentId            String?  @map("parent_id")
+  // Si true, los productos de esta categoría REQUIEREN número de serie
+  requiresSerial      Boolean  @default(false) @map("requires_serial")
+  defaultWarrantyDays Int      @default(0) @map("default_warranty_days")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant            @relation(fields: [tenantId], references: [id])
+  parent   ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children ProductCategory[] @relation("CategoryTree")
+  products Product[]
+
+  @@unique([tenantId, name, parentId])
+  @@index([tenantId])
+  @@map("product_categories")
+  @@schema("inventory")
+}
+
+// -----------------------------------------------------------------------------
+// Product — maestro de artículos
+// -----------------------------------------------------------------------------
+
+model Product {
+  id              String          @id @default(cuid())
+  tenantId        String          @map("tenant_id")
+  sku             String
+  barcode         String?
+  name            String
+  description     String?
+  categoryId      String?         @map("category_id")
+  tracking        TrackingType    @default(NONE)
+  ivaRate         Decimal         @default(21.00) @map("iva_rate") @db.Decimal(5, 2)
+  internalTaxRate Decimal         @default(0) @map("internal_tax_rate") @db.Decimal(5, 2)
+  costMethod      CostMethod      @default(FIFO) @map("cost_method")
+  // Costo estándar en USD — crítico en reseller tech por volatilidad
+  standardCostUsd Decimal?        @map("standard_cost_usd") @db.Decimal(18, 4)
+  listPriceArs    Decimal?        @map("list_price_ars") @db.Decimal(18, 2)
+  weightKg        Decimal?        @map("weight_kg") @db.Decimal(10, 3)
+  uom             String          @default("UN") // unidad de medida
+  isActive        Boolean         @default(true) @map("is_active")
+  version         Int             @default(1)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  category   ProductCategory? @relation(fields: [categoryId], references: [id])
+  stockMoves StockMove[]
+  serials    SerialNumber[]
+  salesOrderLines    SalesOrderLine[]
+  purchaseOrderLines PurchaseOrderLine[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, isActive])
+  @@index([tenantId, barcode])
+  @@index([tenantId, name])
+  @@map("products")
+  @@schema("inventory")
+}
+
+enum TrackingType {
+  NONE
+  LOT
+  SERIAL
+
+  @@schema("inventory")
+}
+
+enum CostMethod {
+  FIFO
+  AVG
+  STD
+
+  @@schema("inventory")
+}
+
+// -----------------------------------------------------------------------------
+// Location — physical y virtual (double-entry inventory)
+// -----------------------------------------------------------------------------
+
+model Location {
+  id           String       @id @default(cuid())
+  tenantId     String       @map("tenant_id")
+  code         String
+  name         String
+  locationType LocationType @map("location_type")
+  parentId     String?      @map("parent_id")
+  isActive     Boolean      @default(true) @map("is_active")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
+  parent          Location?      @relation("LocationTree", fields: [parentId], references: [id])
+  children        Location[]     @relation("LocationTree")
+  movesFromHere   StockMove[]    @relation("StockMoveSource")
+  movesToHere     StockMove[]    @relation("StockMoveDest")
+  serialsHere     SerialNumber[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, locationType])
+  @@map("locations")
+  @@schema("inventory")
+}
+
+enum LocationType {
+  INTERNAL       // Depósito físico
+  CUSTOMER       // Virtual: stock entregado al cliente
+  SUPPLIER       // Virtual: stock comprometido por proveedor
+  TRANSIT        // En tránsito (importación)
+  INVENTORY_LOSS // Ajustes negativos
+  PRODUCTION     // Ensamble
+  RMA            // Devoluciones pendientes
+
+  @@schema("inventory")
+}
+
+// -----------------------------------------------------------------------------
+// StockMove — corazón del inventario. Nunca actualizar physical directamente.
+// -----------------------------------------------------------------------------
+
+model StockMove {
+  id                String    @id @default(cuid())
+  tenantId          String    @map("tenant_id")
+  productId         String    @map("product_id")
+  quantity          Decimal   @db.Decimal(18, 4)
+  uom               String    @default("UN")
+  // Double-entry: transfer entre 2 locations
+  sourceLocationId  String    @map("source_location_id")
+  destLocationId    String    @map("dest_location_id")
+  state             MoveState @default(DRAFT)
+  // Origen polimórfico controlado (FK lógicas, chequeadas en código)
+  originDocType     String    @map("origin_doc_type") // 'SO','PO','TRANSFER','ADJUSTMENT','RMA','RECEIPT'
+  originDocId       String    @map("origin_doc_id")
+  originLineId      String?   @map("origin_line_id")
+  // Costeo
+  unitCost          Decimal?  @map("unit_cost") @db.Decimal(18, 4)
+  unitCostUsd       Decimal?  @map("unit_cost_usd") @db.Decimal(18, 4)
+  fxRate            Decimal?  @map("fx_rate") @db.Decimal(18, 6)
+  // Timing
+  scheduledDate     DateTime  @map("scheduled_date")
+  doneDate          DateTime? @map("done_date")
+  // Audit
+  createdById       String    @map("created_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  cancelledAt       DateTime? @map("cancelled_at")
+  cancelReason      String?   @map("cancel_reason")
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  sourceLocation  Location        @relation("StockMoveSource", fields: [sourceLocationId], references: [id])
+  destLocation    Location        @relation("StockMoveDest", fields: [destLocationId], references: [id])
+  createdBy       User            @relation("StockMoveCreatedBy", fields: [createdById], references: [id])
+  serialMoves     StockMoveSerial[]
+
+  // Los índices son agresivos — son los queries más frecuentes del sistema
+  @@index([tenantId, productId, state])
+  @@index([tenantId, originDocType, originDocId])
+  @@index([tenantId, destLocationId, state])
+  @@index([tenantId, sourceLocationId, state])
+  @@index([tenantId, scheduledDate])
+  @@map("stock_moves")
+  @@schema("inventory")
+}
+
+enum MoveState {
+  DRAFT      // Borrador, no afecta stock
+  CONFIRMED  // Confirmado: afecta Committed (salida) o Incoming (entrada)
+  ASSIGNED   // Reservado físicamente con serie específica
+  DONE       // Ejecutado: afecta Physical
+  CANCELLED  // No considerar en cálculos
+
+  @@schema("inventory")
+}
+
+// -----------------------------------------------------------------------------
+// SerialNumber — unidad trazable individual
+// -----------------------------------------------------------------------------
+
+model SerialNumber {
+  id                  String       @id @default(cuid())
+  tenantId            String       @map("tenant_id")
+  productId           String       @map("product_id")
+  serial              String
+  // Denormalizado para queries rápidos, es recalculable desde moves
+  currentLocationId   String?      @map("current_location_id")
+  status              SerialStatus @default(IN_STOCK)
+  warrantyStart       DateTime?    @map("warranty_start")
+  warrantyEnd         DateTime?    @map("warranty_end")
+  purchaseMoveId      String?      @map("purchase_move_id")
+  // Metadata extra: IMEI, MAC address, lote, etc.
+  metadata            Json?
+  notes               String?
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  product         Product           @relation(fields: [productId], references: [id])
+  currentLocation Location?         @relation(fields: [currentLocationId], references: [id])
+  moveLinks       StockMoveSerial[]
+
+  @@unique([tenantId, productId, serial])
+  @@index([tenantId, status])
+  @@index([tenantId, currentLocationId])
+  @@map("serial_numbers")
+  @@schema("inventory")
+}
+
+enum SerialStatus {
+  IN_STOCK
+  RESERVED
+  DELIVERED
+  RMA
+  SCRAPPED
+
+  @@schema("inventory")
+}
+
+// -----------------------------------------------------------------------------
+// Tabla pivot para asociar moves con series específicas
+// -----------------------------------------------------------------------------
+
+model StockMoveSerial {
+  id       String @id @default(cuid())
+  moveId   String @map("move_id")
+  serialId String @map("serial_id")
+
+  move   StockMove    @relation(fields: [moveId], references: [id], onDelete: Cascade)
+  serial SerialNumber @relation(fields: [serialId], references: [id])
+
+  @@unique([moveId, serialId])
+  @@index([serialId])
+  @@map("stock_move_serials")
+  @@schema("inventory")
+}
+
+// =============================================================================
+// SCHEMA: sales
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// SalesOrder — orden de venta (aggregate root)
+//
+// STATE MACHINE:
+//   DRAFT ──> CONFIRMED ──> PARTIAL ──> DELIVERED ──> INVOICED
+//      │           │            │            │
+//      └───────────┴────────────┴────> CANCELLED
+//
+//   DRAFT:     Presupuesto/borrador. Permite editar líneas. No reserva stock.
+//   CONFIRMED: Stock reservado. No se puede editar. Puede tener backorder.
+//   PARTIAL:   Entregado parcialmente. Hay remitos parciales.
+//   DELIVERED: Todo entregado. Listo para facturar.
+//   INVOICED:  Factura electrónica emitida con CAE. Estado final "feliz".
+//   CANCELLED: Anulado. Stock liberado. Estado final.
+// -----------------------------------------------------------------------------
+
+model SalesOrder {
+  id              String          @id @default(cuid())
+  tenantId        String          @map("tenant_id")
+  // Número legible: secuencia Postgres, nunca MAX(num)+1
+  orderNumber     Int             @map("order_number")
+  customerId      String          @map("customer_id")
+  state           SalesOrderState @default(DRAFT)
+  // Moneda siempre ARS para contabilidad. El precio USD va en las líneas.
+  currency        String          @default("ARS")
+  // Tipo de cambio al momento de confirmar — crítico para resellers tech
+  fxRateAtConfirm Decimal?        @map("fx_rate_at_confirm") @db.Decimal(18, 6)
+  // Términos
+  paymentTermDays Int             @default(0) @map("payment_term_days")
+  deliveryAddress String?         @map("delivery_address")
+  notes           String?
+  // Flag: al confirmar, alguna línea no tenía stock suficiente
+  requiresBackorder Boolean       @default(false) @map("requires_backorder")
+  // Totales desnormalizados — recalculados en app al confirmar/modificar
+  subtotalArs     Decimal         @default(0) @map("subtotal_ars") @db.Decimal(18, 2)
+  taxAmountArs    Decimal         @default(0) @map("tax_amount_ars") @db.Decimal(18, 2)
+  totalArs        Decimal         @default(0) @map("total_ars") @db.Decimal(18, 2)
+  // Optimistic locking
+  version         Int             @default(1)
+  // Audit
+  createdById     String          @map("created_by_id")
+  confirmedAt     DateTime?       @map("confirmed_at")
+  deliveredAt     DateTime?       @map("delivered_at")
+  invoicedAt      DateTime?       @map("invoiced_at")
+  cancelledAt     DateTime?       @map("cancelled_at")
+  cancelReason    String?         @map("cancel_reason")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  tenant    Tenant           @relation(fields: [tenantId], references: [id])
+  customer  Entity           @relation(fields: [customerId], references: [id])
+  createdBy User             @relation("SalesOrderCreatedBy", fields: [createdById], references: [id])
+  lines     SalesOrderLine[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, state])
+  @@index([tenantId, customerId])
+  @@index([tenantId, createdAt])
+  @@map("sales_orders")
+  @@schema("sales")
+}
+
+enum SalesOrderState {
+  DRAFT
+  CONFIRMED
+  PARTIAL
+  DELIVERED
+  INVOICED
+  CANCELLED
+
+  @@schema("sales")
+}
+
+// -----------------------------------------------------------------------------
+// SalesOrderLine — línea de una OV
+//
+// La relación con StockMove es a través de originDocId = salesOrderId y
+// originLineId = salesOrderLineId — no hay FK directa para mantener
+// los bounded contexts desacoplados en DB también.
+// -----------------------------------------------------------------------------
+
+model SalesOrderLine {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  orderId     String   @map("order_id")
+  productId   String   @map("product_id")
+  lineNumber  Int      @map("line_number")
+  description String?
+  quantity    Decimal  @db.Decimal(18, 4)
+  uom         String   @default("UN")
+  // Precio unitario ARS (snapshot al crear la línea)
+  unitPriceArs  Decimal @map("unit_price_ars") @db.Decimal(18, 2)
+  // Descuento en % (0.00 a 100.00)
+  discountPct   Decimal @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  // IVA snapshot al crear la línea (no recalcular si la tasa cambia)
+  ivaRate       Decimal @map("iva_rate") @db.Decimal(5, 2)
+  // Cantidades de entrega/facturación (control de parciales)
+  quantityDelivered Decimal @default(0) @map("quantity_delivered") @db.Decimal(18, 4)
+  quantityInvoiced  Decimal @default(0) @map("quantity_invoiced") @db.Decimal(18, 4)
+  // Backorder: esta línea no pudo reservarse completamente
+  requiresBackorder Boolean @default(false) @map("requires_backorder")
+  // ID del stock move de reserva creado al confirmar (FK lógica, no DB)
+  reserveMoveId     String? @map("reserve_move_id")
+  // Totales pre-calculados
+  subtotalArs   Decimal @default(0) @map("subtotal_ars") @db.Decimal(18, 2)
+  taxAmountArs  Decimal @default(0) @map("tax_amount_ars") @db.Decimal(18, 2)
+  totalArs      Decimal @default(0) @map("total_ars") @db.Decimal(18, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  order   SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id])
+
+  @@unique([orderId, lineNumber])
+  @@index([tenantId, orderId])
+  @@index([tenantId, productId])
+  @@map("sales_order_lines")
+  @@schema("sales")
+}
+
+// =============================================================================
+// SCHEMA: purchases
+// =============================================================================
+
+// STATE MACHINE:
+//   DRAFT ──> CONFIRMED ──> PARTIAL ──> RECEIVED
+//      │           │            │
+//      └───────────┴────────────┴──> CANCELLED
+
+model PurchaseOrder {
+  id              String             @id @default(cuid())
+  tenantId        String             @map("tenant_id")
+  orderNumber     Int                @map("order_number")
+  supplierId      String             @map("supplier_id")
+  state           PurchaseOrderState @default(DRAFT)
+  // OCs a proveedores tech normalmente en USD
+  currency        String             @default("USD")
+  fxRateAtConfirm Decimal?           @map("fx_rate_at_confirm") @db.Decimal(18, 6)
+  expectedDate    DateTime?          @map("expected_date") @db.Date
+  deliveryAddress String?            @map("delivery_address")
+  notes           String?
+  // Back-to-back: FK lógica a la OV que originó esta OC
+  soOriginId      String?            @map("so_origin_id")
+  // Totales en USD (la moneda de compra)
+  subtotalUsd     Decimal            @default(0) @map("subtotal_usd") @db.Decimal(18, 2)
+  taxAmountUsd    Decimal            @default(0) @map("tax_amount_usd") @db.Decimal(18, 2)
+  totalUsd        Decimal            @default(0) @map("total_usd") @db.Decimal(18, 2)
+  // Totales convertidos a ARS (solo cuando hay fxRate)
+  subtotalArs     Decimal            @default(0) @map("subtotal_ars") @db.Decimal(18, 2)
+  totalArs        Decimal            @default(0) @map("total_ars") @db.Decimal(18, 2)
+  version         Int                @default(1)
+  createdById     String             @map("created_by_id")
+  confirmedAt     DateTime?          @map("confirmed_at")
+  receivedAt      DateTime?          @map("received_at")
+  cancelledAt     DateTime?          @map("cancelled_at")
+  cancelReason    String?            @map("cancel_reason")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  tenant    Tenant              @relation(fields: [tenantId], references: [id])
+  supplier  Entity              @relation("SupplierOrders", fields: [supplierId], references: [id])
+  createdBy User                @relation("POCreatedBy", fields: [createdById], references: [id])
+  lines     PurchaseOrderLine[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, state])
+  @@index([tenantId, supplierId])
+  @@index([soOriginId])
+  @@map("purchase_orders")
+  @@schema("purchases")
+}
+
+enum PurchaseOrderState {
+  DRAFT
+  CONFIRMED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+
+  @@schema("purchases")
+}
+
+model PurchaseOrderLine {
+  id               String   @id @default(cuid())
+  tenantId         String   @map("tenant_id")
+  orderId          String   @map("order_id")
+  productId        String   @map("product_id")
+  lineNumber       Int      @map("line_number")
+  description      String?
+  quantity         Decimal  @db.Decimal(18, 4)
+  uom              String   @default("UN")
+  unitCostUsd      Decimal  @map("unit_cost_usd") @db.Decimal(18, 4)
+  ivaRate          Decimal  @default(0) @map("iva_rate") @db.Decimal(5, 2)
+  quantityReceived Decimal  @default(0) @map("quantity_received") @db.Decimal(18, 4)
+  // ID del move CONFIRMED (Incoming) creado al confirmar la OC
+  incomingMoveId   String?  @map("incoming_move_id")
+  // FK lógica a la línea de OV que originó el backorder
+  soLineOriginId   String?  @map("so_line_origin_id")
+  subtotalUsd      Decimal  @default(0) @map("subtotal_usd") @db.Decimal(18, 2)
+  taxAmountUsd     Decimal  @default(0) @map("tax_amount_usd") @db.Decimal(18, 2)
+  totalUsd         Decimal  @default(0) @map("total_usd") @db.Decimal(18, 2)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  order   PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id])
+
+  @@unique([orderId, lineNumber])
+  @@index([tenantId, orderId])
+  @@index([tenantId, productId])
+  @@map("purchase_order_lines")
+  @@schema("purchases")
+}

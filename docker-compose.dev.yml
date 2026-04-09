@@ -1,0 +1,35 @@
+version: '3.9'
+
+# ============================================================
+# docker-compose.dev.yml — Solo para desarrollo LOCAL
+# No necesita nginx, SSL ni certificados ARCA
+# ============================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: erp-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: erp_dev
+      POSTGRES_USER: erp_user
+      POSTGRES_PASSWORD: devpassword123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp_user -d erp_dev"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: erp-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass devredis123
+
+volumes:
+  postgres_dev_data:

@@ -1,0 +1,37 @@
+{
+  "name": "erp-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @erp/api dev",
+    "dev:worker": "pnpm --filter @erp/worker dev",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @erp/api test:e2e",
+    "db:generate": "pnpm --filter @erp/database generate",
+    "db:migrate": "pnpm --filter @erp/database migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @erp/database migrate:deploy",
+    "db:seed": "pnpm --filter @erp/database seed",
+    "db:studio": "pnpm --filter @erp/database studio",
+    "db:reset": "pnpm --filter @erp/database reset",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
+    "@types/node": "^22.7.0",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
+  }
+}
