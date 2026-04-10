@@ -23,6 +23,7 @@ RUN npm i -g pnpm@9
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages     ./packages
 COPY . .
+RUN pnpm install --frozen-lockfile --prod=false
 
 # Generar cliente Prisma
 RUN pnpm --filter @erp/database generate
