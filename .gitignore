@@ -1,25 +1,60 @@
+# Dependencias
 node_modules/
+.pnpm-store/
+
+# Build outputs
 dist/
 build/
 .next/
 out/
+
+# Prisma
+*.db
+*.db-journal
+
+# Variables de entorno con secretos REALES
+# (solo commitear los .example)
 .env
 .env.local
 .env.production
+.env.staging
 .env.*.local
+
+# Certificados y secretos — NUNCA al repo
 secrets/
 *.crt
 *.key
 *.pem
 *.csr
-*.db
+*.p12
+*.pfx
+
+# Logs
+logs/
 *.log
+npm-debug.log*
+yarn-error.log*
+
+# OS
 .DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# IDEs
 .vscode/
 .idea/
+*.suo
+*.sw?
+
+# Testing
 coverage/
+.nyc_output/
+
+# TypeScript
 *.tsbuildinfo
-.pnpm-store/
+
+# Archivos temporales del repo anterior
 *.bak
 *.tar.gz
-"files (*).zip"
+prisma/*.sql

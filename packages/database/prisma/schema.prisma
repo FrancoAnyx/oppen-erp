@@ -76,6 +76,7 @@ enum UserRole {
   MANAGER
   USER
   VIEWER
+
   @@schema("core")
 }
 
@@ -169,8 +170,21 @@ model Product {
   @@schema("inventory")
 }
 
-enum TrackingType { NONE; LOT; SERIAL; @@schema("inventory") }
-enum CostMethod   { FIFO; AVG; STD;   @@schema("inventory") }
+enum TrackingType {
+  NONE
+  LOT
+  SERIAL
+
+  @@schema("inventory")
+}
+
+enum CostMethod {
+  FIFO
+  AVG
+  STD
+
+  @@schema("inventory")
+}
 
 model Location {
   id           String       @id @default(cuid())
@@ -195,7 +209,17 @@ model Location {
   @@schema("inventory")
 }
 
-enum LocationType { INTERNAL; CUSTOMER; SUPPLIER; TRANSIT; INVENTORY_LOSS; PRODUCTION; RMA; @@schema("inventory") }
+enum LocationType {
+  INTERNAL
+  CUSTOMER
+  SUPPLIER
+  TRANSIT
+  INVENTORY_LOSS
+  PRODUCTION
+  RMA
+
+  @@schema("inventory")
+}
 
 model StockMove {
   id               String    @id @default(cuid())
@@ -234,7 +258,15 @@ model StockMove {
   @@schema("inventory")
 }
 
-enum MoveState { DRAFT; CONFIRMED; ASSIGNED; DONE; CANCELLED; @@schema("inventory") }
+enum MoveState {
+  DRAFT
+  CONFIRMED
+  ASSIGNED
+  DONE
+  CANCELLED
+
+  @@schema("inventory")
+}
 
 model SerialNumber {
   id                String       @id @default(cuid())
@@ -257,11 +289,20 @@ model SerialNumber {
   moveLinks       StockMoveSerial[]
 
   @@unique([tenantId, productId, serial])
+  @@index([tenantId, status])
   @@map("serial_numbers")
   @@schema("inventory")
 }
 
-enum SerialStatus { IN_STOCK; RESERVED; DELIVERED; RMA; SCRAPPED; @@schema("inventory") }
+enum SerialStatus {
+  IN_STOCK
+  RESERVED
+  DELIVERED
+  RMA
+  SCRAPPED
+
+  @@schema("inventory")
+}
 
 model StockMoveSerial {
   id       String @id @default(cuid())
@@ -318,7 +359,16 @@ model SalesOrder {
   @@schema("sales")
 }
 
-enum SalesOrderState { DRAFT; CONFIRMED; PARTIAL; DELIVERED; INVOICED; CANCELLED; @@schema("sales") }
+enum SalesOrderState {
+  DRAFT
+  CONFIRMED
+  PARTIAL
+  DELIVERED
+  INVOICED
+  CANCELLED
+
+  @@schema("sales")
+}
 
 model SalesOrderLine {
   id                String   @id @default(cuid())
@@ -388,7 +438,15 @@ model PurchaseOrder {
   @@schema("purchases")
 }
 
-enum PurchaseOrderState { DRAFT; CONFIRMED; PARTIAL; RECEIVED; CANCELLED; @@schema("purchases") }
+enum PurchaseOrderState {
+  DRAFT
+  CONFIRMED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+
+  @@schema("purchases")
+}
 
 model PurchaseOrderLine {
   id               String   @id @default(cuid())
@@ -439,36 +497,36 @@ model PosNumber {
 }
 
 model Invoice {
-  id           String       @id @default(cuid())
-  tenantId     String       @map("tenant_id")
-  salesOrderId String?      @map("sales_order_id")
-  posNumberId  String       @map("pos_number_id")
-  invoiceType  Int          @map("invoice_type")
-  invoiceNumber Int?        @map("invoice_number")
-  docType      Int          @default(80) @map("doc_type")
-  docNumber    String       @map("doc_number")
-  concept      Int          @default(1)
-  issueDate    DateTime     @map("issue_date") @db.Date
-  currency     String       @default("PES")
-  fxRate       Decimal      @default(1) @map("fx_rate") @db.Decimal(18, 6)
-  netAmount    Decimal      @map("net_amount") @db.Decimal(18, 2)
-  ivaAmount    Decimal      @map("iva_amount") @db.Decimal(18, 2)
-  totalAmount  Decimal      @map("total_amount") @db.Decimal(18, 2)
-  state        InvoiceState @default(PENDING)
-  cae          String?
-  caeExpiry    DateTime?    @map("cae_expiry") @db.Date
-  caea         String?
-  errorCode    String?      @map("error_code")
-  errorMsg     String?      @map("error_msg") @db.Text
-  retryCount   Int          @default(0) @map("retry_count")
-  requestXml   String?      @map("request_xml") @db.Text
-  responseXml  String?      @map("response_xml") @db.Text
-  isContingency Boolean     @default(false) @map("is_contingency")
-  version      Int          @default(1)
-  createdById  String       @map("created_by_id")
-  approvedAt   DateTime?    @map("approved_at")
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
+  id            String       @id @default(cuid())
+  tenantId      String       @map("tenant_id")
+  salesOrderId  String?      @map("sales_order_id")
+  posNumberId   String       @map("pos_number_id")
+  invoiceType   Int          @map("invoice_type")
+  invoiceNumber Int?         @map("invoice_number")
+  docType       Int          @default(80) @map("doc_type")
+  docNumber     String       @map("doc_number")
+  concept       Int          @default(1)
+  issueDate     DateTime     @map("issue_date") @db.Date
+  currency      String       @default("PES")
+  fxRate        Decimal      @default(1) @map("fx_rate") @db.Decimal(18, 6)
+  netAmount     Decimal      @map("net_amount") @db.Decimal(18, 2)
+  ivaAmount     Decimal      @map("iva_amount") @db.Decimal(18, 2)
+  totalAmount   Decimal      @map("total_amount") @db.Decimal(18, 2)
+  state         InvoiceState @default(PENDING)
+  cae           String?
+  caeExpiry     DateTime?    @map("cae_expiry") @db.Date
+  caea          String?
+  errorCode     String?      @map("error_code")
+  errorMsg      String?      @map("error_msg") @db.Text
+  retryCount    Int          @default(0) @map("retry_count")
+  requestXml    String?      @map("request_xml") @db.Text
+  responseXml   String?      @map("response_xml") @db.Text
+  isContingency Boolean      @default(false) @map("is_contingency")
+  version       Int          @default(1)
+  createdById   String       @map("created_by_id")
+  approvedAt    DateTime?    @map("approved_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
 
   tenant       Tenant        @relation(fields: [tenantId], references: [id])
   salesOrder   SalesOrder?   @relation(fields: [salesOrderId], references: [id])
@@ -483,22 +541,31 @@ model Invoice {
   @@schema("fiscal")
 }
 
-enum InvoiceState { PENDING; QUEUED; PROCESSING; APPROVED; FAILED; VOIDED; @@schema("fiscal") }
+enum InvoiceState {
+  PENDING
+  QUEUED
+  PROCESSING
+  APPROVED
+  FAILED
+  VOIDED
+
+  @@schema("fiscal")
+}
 
 model InvoiceLine {
-  id          String   @id @default(cuid())
-  tenantId    String   @map("tenant_id")
-  invoiceId   String   @map("invoice_id")
-  lineNumber  Int      @map("line_number")
-  description String
-  quantity    Decimal  @db.Decimal(18, 4)
-  unitPrice   Decimal  @map("unit_price") @db.Decimal(18, 2)
-  bonus       Decimal  @default(0) @db.Decimal(18, 2)
-  ivaId       Int      @map("iva_id")
-  ivaAmount   Decimal  @map("iva_amount") @db.Decimal(18, 2)
-  totalAmount Decimal  @map("total_amount") @db.Decimal(18, 2)
-  salesOrderLineId String? @map("sales_order_line_id")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id               String   @id @default(cuid())
+  tenantId         String   @map("tenant_id")
+  invoiceId        String   @map("invoice_id")
+  lineNumber       Int      @map("line_number")
+  description      String
+  quantity         Decimal  @db.Decimal(18, 4)
+  unitPrice        Decimal  @map("unit_price") @db.Decimal(18, 2)
+  bonus            Decimal  @default(0) @db.Decimal(18, 2)
+  ivaId            Int      @map("iva_id")
+  ivaAmount        Decimal  @map("iva_amount") @db.Decimal(18, 2)
+  totalAmount      Decimal  @map("total_amount") @db.Decimal(18, 2)
+  salesOrderLineId String?  @map("sales_order_line_id")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
@@ -579,8 +646,20 @@ model Receipt {
   @@schema("accounting")
 }
 
-enum ReceiptType  { COBRO; PAGO;                  @@schema("accounting") }
-enum ReceiptState { DRAFT; CONFIRMED; CANCELLED;  @@schema("accounting") }
+enum ReceiptType {
+  COBRO
+  PAGO
+
+  @@schema("accounting")
+}
+
+enum ReceiptState {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+
+  @@schema("accounting")
+}
 
 model BankTx {
   id            String     @id @default(cuid())
@@ -601,4 +680,9 @@ model BankTx {
   @@schema("accounting")
 }
 
-enum BankTxType { CREDIT; DEBIT; @@schema("accounting") }
+enum BankTxType {
+  CREDIT
+  DEBIT
+
+  @@schema("accounting")
+}
