@@ -1,32 +1,25 @@
 node_modules/
 dist/
 build/
-coverage/
-*.tsbuildinfo
-
-# Env
+.next/
+out/
 .env
 .env.local
+.env.production
 .env.*.local
-!.env.example
-
-# IDE
+secrets/
+*.crt
+*.key
+*.pem
+*.csr
+*.db
+*.log
+.DS_Store
 .vscode/
 .idea/
-*.swp
-
-# Logs
-*.log
-npm-debug.log*
-pnpm-debug.log*
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Prisma
-packages/database/prisma/migrations/dev/
-
-# Docker volumes
-postgres_data/
-redis_data/
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+*.bak
+*.tar.gz
+"files (*).zip"

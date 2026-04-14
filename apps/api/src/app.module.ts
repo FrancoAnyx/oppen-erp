@@ -1,72 +1,69 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { APP_FILTER, APP_PIPE } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
-import { AppConfigModule } from './config/config.module';
-import { PrismaModule } from './infrastructure/database/prisma.module';
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { BullModule } from '@nestjs/bullmq';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+
+import { CoreModule }       from './modules/core/core.module';
+import { AuthModule }       from './modules/auth/auth.module';
+import { InventoryModule }  from './modules/inventory/inventory.module';
+import { SalesModule }      from './modules/sales/sales.module';
+import { PurchasesModule }  from './modules/purchases/purchases.module';
+import { FiscalModule }     from './modules/fiscal/fiscal.module';
+import { DeliveryModule }   from './modules/delivery/delivery.module';
+import { AccountingModule } from './modules/accounting/accounting.module';
+
 import { DomainExceptionFilter } from './infrastructure/http/domain-exception.filter';
-import { TenantContextMiddleware } from './infrastructure/http/tenant-context.middleware';
+import { LoggingInterceptor, TransformInterceptor } from './common/interceptors/interceptors';
+import { ThrottlerBehindProxyGuard } from './common/guards/throttler-proxy.guard';
+import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { HealthController } from './health/health.controller';
-import { CoreModule } from './modules/core/core.module';
-import { InventoryModule } from './modules/inventory/inventory.module';
-import { SalesModule } from './modules/sales/sales.module';
-import { AuthModule } from './modules/auth/auth.module';
-import { PurchasesModule } from './modules/purchases/purchases.module';
 
-const isProduction = process.env.NODE_ENV === 'production';
-
-/**
- * AppModule — módulo raíz de la aplicación.
- *
- * Orden de inicialización:
- *   1. AppConfigModule (global)   — valida env, provee ConfigService
- *   2. PrismaModule (global)      — conexión a Postgres
- *   3. Bounded contexts           — Core, Inventory, (futuros: Sales, Purchases, Fiscal)
- *
- * Providers globales:
- *   - ValidationPipe: aplica class-validator a TODOS los DTOs automáticamente
- *   - DomainExceptionFilter: captura todos los errores y los traduce a HTTP
- *
- * Middleware:
- *   - TenantContextMiddleware: inyecta req.tenantId en todas las rutas
- */
 @Module({
   imports: [
-    // Cross-cutting (globales)
-    AppConfigModule,
-    PrismaModule,
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env'], cache: true }),
 
-    // Auth (global — debe ir antes de los bounded contexts)
-    AuthModule,
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: () => [
+        { name: 'default', ttl: 60_000, limit: 120 },
+        { name: 'auth',    ttl: 60_000, limit: 10  },
+      ],
+    }),
 
-    // Bounded contexts
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host:     config.get('REDIS_HOST', 'localhost'),
+          port:     config.get<number>('REDIS_PORT', 6379),
+          password: config.get('REDIS_PASSWORD'),
+        },
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: { count: 1000, age: 86400 },
+          removeOnFail:    { count: 5000, age: 604800 },
+        },
+      }),
+    }),
+
     CoreModule,
+    AuthModule,
     InventoryModule,
     SalesModule,
     PurchasesModule,
-    // FiscalModule,     — fase 2
-    // FiscalModule,     — fase 2
+    FiscalModule,
+    DeliveryModule,
+    AccountingModule,
   ],
   controllers: [HealthController],
   providers: [
-    {
-      provide: APP_PIPE,
-      useValue: new ValidationPipe({
-        whitelist: true,              // elimina campos no declarados en el DTO
-        forbidNonWhitelisted: true,   // 400 si mandan campos extra
-        transform: true,              // aplica @Transform y convierte tipos
-        transformOptions: { enableImplicitConversion: false },
-        stopAtFirstError: false,      // acumula todos los errores de un request
-      }),
-    },
-    {
-      provide: APP_FILTER,
-      useFactory: () => new DomainExceptionFilter(isProduction),
-    },
+    { provide: APP_FILTER,      useClass: DomainExceptionFilter },
+    { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },
+    { provide: APP_GUARD,       useClass: ThrottlerBehindProxyGuard },
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(TenantContextMiddleware).forRoutes('*');
-  }
-}
-
+export class AppModule {}
