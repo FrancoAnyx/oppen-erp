@@ -25,7 +25,9 @@
     "db:setup:sql": "pnpm --filter @erp/database setup:sql",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f"
+    "docker:logs": "docker compose logs -f",
+    "build:packages": "pnpm --filter @erp/shared build && pnpm --filter @erp/database build",
+    "setup": "pnpm install && pnpm --filter @erp/shared build && pnpm db:generate && pnpm --filter @erp/database build && pnpm db:migrate && pnpm db:seed"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

@@ -1,95 +1,128 @@
-# Setup en Windows (PowerShell)
+# Setup — öppen ERP en Windows (PowerShell)
 
-> En PowerShell, `&&` no funciona. Ejecutar los comandos de a uno.
-
-## Primer setup completo
+## Opción A: Script automático (recomendado)
 
 ```powershell
-# 1. Instalar dependencias
+# Ejecutar desde la raíz del repo
+.\setup.ps1
+```
+
+El script hace todo en el orden correcto y te muestra el progreso.
+
+---
+
+## Opción B: Paso a paso manual
+
+> ⚠️ En PowerShell `&&` no funciona. Ejecutar cada comando por separado.
+
+### 1. Instalar dependencias
+```powershell
 pnpm install
+```
 
-# 2. Levantar PostgreSQL + Redis + Adminer
+### 2. Levantar Docker (PostgreSQL + Redis)
+```powershell
 docker compose up -d
+```
+Esperar ~10 segundos para que la DB esté lista.
 
-# 3. Generar cliente Prisma
+### 3. Buildear `@erp/shared` — OBLIGATORIO antes de todo
+```powershell
+pnpm --filter @erp/shared build
+```
+> Este paso es crítico. Sin él, TypeScript no encuentra los tipos y muestra 271 errores.
+
+### 4. Generar cliente Prisma
+```powershell
 pnpm db:generate
+```
 
-# 4. Aplicar migraciones
+### 5. Buildear `@erp/database` (después del generate)
+```powershell
+pnpm --filter @erp/database build
+```
+
+### 6. Aplicar migraciones
+```powershell
 pnpm db:migrate
+```
+Cuando pregunte el nombre de la migración, escribir: `init` y Enter.
 
-# 5. Correr vistas SQL de stock (OBLIGATORIO)
-#    En PowerShell usar Get-Content con pipe:
+### 7. Vistas SQL de stock (sintaxis PowerShell)
+```powershell
 Get-Content packages\database\prisma\migrations\post\001_stock_views_and_functions.sql | docker exec -i oppen_postgres psql -U erp -d erp_dev
-
-# 6. También correr las otras migrations post:
 Get-Content packages\database\prisma\migrations\post\002_delivery_sequences.sql | docker exec -i oppen_postgres psql -U erp -d erp_dev
 Get-Content packages\database\prisma\migrations\post\003_fiscal_sequences.sql | docker exec -i oppen_postgres psql -U erp -d erp_dev
+```
 
-# 7. Seed inicial
+### 8. Seed (datos iniciales)
+```powershell
 pnpm db:seed
+```
 
-# 8. Arrancar API (puerto 3000)
+### 9. Arrancar el sistema
+
+**Terminal 1 — API:**
+```powershell
 pnpm dev
+```
 
-# 9. En otra terminal: arrancar Frontend (puerto 3001)
+**Terminal 2 — Frontend:**
+```powershell
 pnpm dev:web
 ```
+
+---
+
+## URLs
+
+| Servicio | URL |
+|----------|-----|
+| API | http://localhost:3000/api/v1 |
+| Frontend | http://localhost:3001 |
+| Adminer (DB UI) | http://localhost:8080 |
+| Health check | http://localhost:3000/api/v1/health |
 
 ## Login demo
-- URL: http://localhost:3001
-- Email: admin@demo.local
-- Password: Admin1234!
+- **Email:** admin@demo.local
+- **Password:** Admin1234!
 
-## Comandos del día a día
-
-```powershell
-# Arrancar solo la API
-pnpm dev
-
-# Arrancar solo el frontend
-pnpm dev:web
-
-# Ver logs de Docker
-docker compose logs -f
-
-# Abrir Prisma Studio (UI para ver la DB)
-pnpm db:studio
-
-# Adminer (UI web para PostgreSQL)
-# http://localhost:8080
-# Server: postgres | User: erp | Pass: erp_dev_password | DB: erp_dev
-
-# Reset completo de la DB (cuidado: borra todo)
-pnpm db:reset
-pnpm db:seed
-```
+---
 
 ## Troubleshooting
 
+### `Cannot find module '@erp/shared'` (271 errores TypeScript)
+```powershell
+pnpm --filter @erp/shared build
+pnpm --filter @erp/database build
+```
+Esto genera las carpetas `dist/` que TypeScript necesita.
+
 ### `SyntaxError: does not provide an export named 'PrismaClient'`
 ```powershell
-# El cliente de Prisma no fue generado. Ejecutar:
 pnpm db:generate
+pnpm --filter @erp/database build
 ```
 
 ### `relation inventory.v_stock_quantities does not exist`
 ```powershell
-# Faltó correr la migration SQL. Ejecutar:
 Get-Content packages\database\prisma\migrations\post\001_stock_views_and_functions.sql | docker exec -i oppen_postgres psql -U erp -d erp_dev
 ```
 
-### `Cannot find module '@erp/shared'`
+### La DB no está lista al hacer migrate
 ```powershell
-# Los packages internos no fueron buildeados:
-pnpm --filter @erp/shared build
-pnpm --filter @erp/database build
+docker compose up -d
+Start-Sleep -Seconds 15
+pnpm db:migrate
 ```
 
-### `dev:all` no funciona
+### Ver logs de la DB
 ```powershell
-# Abrir dos terminales y ejecutar en cada una:
-# Terminal 1:
-pnpm dev
-# Terminal 2:
-pnpm dev:web
+docker compose logs -f postgres
+```
+
+### Reset completo (borra todos los datos)
+```powershell
+pnpm db:reset
+pnpm db:seed
 ```
