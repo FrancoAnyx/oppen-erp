@@ -57,4 +57,3 @@ coverage/
 # Archivos temporales del repo anterior
 *.bak
 *.tar.gz
-prisma/*.sql
